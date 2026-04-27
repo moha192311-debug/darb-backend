@@ -2,7 +2,7 @@
 """
 Routes للمصادقة: تسجيل، دخول، خروج، نسيت كلمة المرور
 """
-
+from core.config import settings
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
@@ -197,16 +197,19 @@ async def get_me(current_user=Depends(get_current_user)):
 # =========================
 # Google OAuth
 # =========================
+
 @router.get("/google")
 async def google_login():
     try:
         supabase = get_supabase()
+        frontend = settings.FRONTEND_URL or "http://localhost:3000"
         result = supabase.auth.sign_in_with_oauth({
-            "provider": "google"
+            "provider": "google",
+            "options": {
+                "redirect_to": f"{frontend}/?token=google"
+            }
         })
-
         return {"url": result.url}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
