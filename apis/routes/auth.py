@@ -4,7 +4,7 @@ Routes للمصادقة: تسجيل، دخول، خروج، نسيت كلمة ا
 """
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional
 
 from data.supabase_client import get_supabase
@@ -17,19 +17,19 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Models
 # =========================
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str   # plain str — Supabase validates email on its own
     password: str
     username: str
     phone: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str   # plain str — no pydantic email check
     password: str
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
+    email: str   # plain str
 
 
 class ResetPasswordRequest(BaseModel):
@@ -56,16 +56,31 @@ async def register(user_data: RegisterRequest):
         })
 
         if not response.user:
-            raise HTTPException(status_code=400, detail="Registration failed")
+            raise HTTPException(status_code=400, detail="فشل إنشاء الحساب")
+
+        token = None
+        if response.session:
+            token = response.session.access_token
 
         return {
             "success": True,
             "user_id": response.user.id,
-            "email": response.user.email
+            "email": response.user.email,
+            "access_token": token,
+            "user": {
+                "id": response.user.id,
+                "email": response.user.email,
+                "username": user_data.username,
+            }
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err = str(e)
+        if "already registered" in err or "already exists" in err:
+            raise HTTPException(status_code=400, detail="البريد الإلكتروني مسجّل بالفعل — جرّب تسجيل الدخول")
+        raise HTTPException(status_code=500, detail=err)
 
 
 # =========================
@@ -96,8 +111,15 @@ async def login(credentials: LoginRequest):
             }
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        err = str(e)
+        if "invalid" in err.lower() or "credentials" in err.lower() or "wrong" in err.lower():
+            raise HTTPException(status_code=401, detail="البريد الإلكتروني أو كلمة المرور غير صحيحة")
+        if "email" in err.lower() and "confirm" in err.lower():
+            raise HTTPException(status_code=401, detail="يرجى تأكيد بريدك الإلكتروني أولاً")
+        raise HTTPException(status_code=401, detail=err)
 
 
 # =========================
@@ -117,8 +139,7 @@ async def logout(current_user=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# =========================
+        # =========================
 # Forgot Password
 # =========================
 @router.post("/forgot-password")
@@ -183,6 +204,11 @@ async def google_login():
         result = supabase.auth.sign_in_with_oauth({
             "provider": "google"
         })
+
+        return {"url": result.url}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
         return {"url": result.url}
 
