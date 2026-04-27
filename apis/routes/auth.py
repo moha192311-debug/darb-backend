@@ -2,11 +2,13 @@
 """
 Routes للمصادقة: تسجيل، دخول، خروج، نسيت كلمة المرور
 """
-from core.config import settings
+
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 
+from core.config import settings
 from data.supabase_client import get_supabase
 from apis.dependencies.auth import get_current_user
 
@@ -17,19 +19,19 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Models
 # =========================
 class RegisterRequest(BaseModel):
-    email: str   # plain str — Supabase validates email on its own
+    email: str
     password: str
     username: str
     phone: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
-    email: str   # plain str — no pydantic email check
+    email: str
     password: str
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str   # plain str
+    email: str
 
 
 class ResetPasswordRequest(BaseModel):
@@ -138,8 +140,7 @@ async def logout(current_user=Depends(get_current_user)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-        # =========================
+# =========================
 # Forgot Password
 # =========================
 @router.post("/forgot-password")
@@ -182,7 +183,7 @@ async def reset_password(
 
 
 # =========================
-# Get current user
+# Get Current User
 # =========================
 @router.get("/me")
 async def get_me(current_user=Depends(get_current_user)):
@@ -195,25 +196,47 @@ async def get_me(current_user=Depends(get_current_user)):
 
 
 # =========================
-# Google OAuth
+# Google OAuth — Step 1: Redirect to Google
 # =========================
-
 @router.get("/google")
 async def google_login():
     try:
         supabase = get_supabase()
-        frontend = settings.FRONTEND_URL or "http://localhost:3000"
+
+        backend_url = settings.BACKEND_URL or "http://localhost:8000"
+
         result = supabase.auth.sign_in_with_oauth({
             "provider": "google",
             "options": {
-                "redirect_to": f"{frontend}/?token=google"
+                "redirect_to": f"{backend_url}/auth/callback"
             }
         })
-        return {"url": result.url}
+
+        return RedirectResponse(url=result.url)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-        return {"url": result.url}
 
+# =========================
+# Google OAuth — Step 2: Callback from Google
+# =========================
+@router.get("/callback")
+async def google_callback(code: str):
+    try:
+        supabase = get_supabase()
+
+        result = supabase.auth.exchange_code_for_session({"auth_code": code})
+
+        if not result.session:
+            raise HTTPException(status_code=400, detail="فشل تسجيل الدخول بجوجل")
+
+        token = result.session.access_token
+        frontend = settings.FRONTEND_URL or "http://localhost:3000"
+
+        return RedirectResponse(url=f"{frontend}/dashboard?token={token}")
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
